@@ -5,7 +5,7 @@
 // which host to target, exposes RPC for app.tsx, and validates input.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { entrySchema, hostContract, readResultSchema } from "./contract.js";
+import { entrySchema, hostContract, readResultSchema, writeResultSchema } from "./contract.js";
 
 export const rpcContract = defineRpcContract({
   files_list: {
@@ -20,6 +20,10 @@ export const rpcContract = defineRpcContract({
   files_read: {
     input: z.object({ path: z.string() }),
     output: readResultSchema,
+  },
+  files_write: {
+    input: z.object({ path: z.string(), content: z.string() }),
+    output: writeResultSchema,
   },
 });
 
@@ -85,6 +89,11 @@ export default async function plugin(bb: BbPluginApi) {
       const { rootPath } = await settings.get();
       const hostId = await resolveHostId();
       return host.call("readFile", { rootPath, path: requestedPath }, { hostId });
+    },
+    files_write: async ({ path: requestedPath, content }) => {
+      const { rootPath } = await settings.get();
+      const hostId = await resolveHostId();
+      return host.call("writeFile", { rootPath, path: requestedPath, content }, { hostId });
     },
   });
 

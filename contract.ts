@@ -15,10 +15,19 @@ export type Entry = z.infer<typeof entrySchema>;
 
 export const readResultSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), content: z.string(), sizeBytes: z.number() }),
+  z.object({
+    kind: z.literal("image"),
+    mimeType: z.string(),
+    base64: z.string(),
+    sizeBytes: z.number(),
+  }),
   z.object({ kind: z.literal("binary"), sizeBytes: z.number() }),
   z.object({ kind: z.literal("too-large"), sizeBytes: z.number() }),
 ]);
 export type ReadResult = z.infer<typeof readResultSchema>;
+
+export const writeResultSchema = z.object({ ok: z.literal(true), sizeBytes: z.number() });
+export type WriteResult = z.infer<typeof writeResultSchema>;
 
 /** Runtime contract for the host.ts entry (full fs access on the office server). */
 export const hostContract = defineRpcContract({
@@ -33,5 +42,9 @@ export const hostContract = defineRpcContract({
   readFile: {
     input: z.object({ rootPath: z.string(), path: z.string() }),
     output: readResultSchema,
+  },
+  writeFile: {
+    input: z.object({ rootPath: z.string(), path: z.string(), content: z.string() }),
+    output: writeResultSchema,
   },
 });

@@ -4,13 +4,32 @@
 // BB's own bb.sdk.files/bb.sdk.hosts.directory helpers silently skip
 // dotfiles (.claude, .agents, ...) — the office explicitly wants those
 // visible, so this plugin reads the filesystem itself instead.
-import { realpath, readdir, readFile as fsReadFile, stat } from "node:fs/promises";
+import {
+  realpath,
+  readdir,
+  readFile as fsReadFile,
+  stat,
+  writeFile as fsWriteFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
-import { hostContract, type Entry, type ReadResult } from "./contract.js";
+import { hostContract, type Entry, type ReadResult, type WriteResult } from "./contract.js";
 
-const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2 MB preview cap
+const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2 MB text preview cap
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB inline image cap
 const BINARY_SNIFF_BYTES = 8192;
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif",
+};
 
 /** Resolves `target` and confirms it stays inside `rootPath` (both absolute). */
 async function resolveWithin(rootPath: string, target: string): Promise<string> {
@@ -65,6 +84,19 @@ function looksBinary(buffer: Buffer): boolean {
 async function readFile(rootPath: string, requestedPath: string): Promise<ReadResult> {
   const file = await resolveWithin(rootPath, requestedPath);
   const fileStat = await stat(file);
+  const imageMime = IMAGE_MIME_BY_EXT[path.extname(file).toLowerCase()];
+  if (imageMime !== undefined) {
+    if (fileStat.size > MAX_IMAGE_BYTES) {
+      return { kind: "too-large", sizeBytes: fileStat.size };
+    }
+    const buffer = await fsReadFile(file);
+    return {
+      kind: "image",
+      mimeType: imageMime,
+      base64: buffer.toString("base64"),
+      sizeBytes: fileStat.size,
+    };
+  }
   if (fileStat.size > MAX_TEXT_BYTES) {
     return { kind: "too-large", sizeBytes: fileStat.size };
   }
@@ -75,10 +107,23 @@ async function readFile(rootPath: string, requestedPath: string): Promise<ReadRe
   return { kind: "text", content: buffer.toString("utf8"), sizeBytes: fileStat.size };
 }
 
+async function writeFile(
+  rootPath: string,
+  requestedPath: string,
+  content: string,
+): Promise<WriteResult> {
+  const file = await resolveWithin(rootPath, requestedPath);
+  await fsWriteFile(file, content, "utf8");
+  const fileStat = await stat(file);
+  return { ok: true, sizeBytes: fileStat.size };
+}
+
 export default experimental_defineHostEntry({
   contract: hostContract,
   handlers: {
     listDir: ({ rootPath, path: requestedPath }) => listDir(rootPath, requestedPath),
     readFile: ({ rootPath, path: requestedPath }) => readFile(rootPath, requestedPath),
+    writeFile: ({ rootPath, path: requestedPath, content }) =>
+      writeFile(rootPath, requestedPath, content),
   },
 });

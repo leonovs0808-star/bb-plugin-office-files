@@ -4,13 +4,59 @@
 // @get-bb/plugin-sdk/app are provided by the BB app at load time (never bundled),
 // so this file must be loaded by BB, not imported directly.
 import { useCallback, useEffect, useState } from "react";
-import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, Markdown, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { Entry, ReadResult } from "./contract";
-import { Icon } from "@/components/ui/icon";
+import { Button } from "@/components/ui/button";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
+
+const MARKDOWN_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
+const IMAGE_EXTENSIONS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico",
+  "avif",
+]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "mkv", "avi", "m4v"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "ogg", "flac", "m4a", "aac"]);
+const ARCHIVE_EXTENSIONS = new Set(["zip", "tar", "gz", "tgz", "rar", "7z", "bz2"]);
+const CODE_EXTENSIONS = new Set([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "sh", "bash", "zsh",
+  "go", "rs", "rb", "php", "c", "h", "cpp", "hpp", "java", "kt", "swift",
+  "json", "jsonc", "yaml", "yml", "toml", "ini", "env", "css", "scss",
+  "html", "htm", "sql", "graphql", "vue", "svelte",
+]);
+
+function extOf(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
+}
+
+function isMarkdownName(name: string): boolean {
+  return MARKDOWN_EXTENSIONS.has(extOf(name));
+}
+
+/** Picks a file/folder icon by extension — a file manager reads faster by shape than by name. */
+function iconForEntry(entry: Entry, open: boolean): IconName {
+  if (entry.kind === "directory") return open ? "FolderOpen" : "Folder";
+  const ext = extOf(entry.name);
+  if (MARKDOWN_EXTENSIONS.has(ext)) return "FileText";
+  if (IMAGE_EXTENSIONS.has(ext)) return "Image";
+  if (VIDEO_EXTENSIONS.has(ext)) return "Video";
+  if (AUDIO_EXTENSIONS.has(ext)) return "Music";
+  if (ext === "pdf") return "Pdf";
+  if (ARCHIVE_EXTENSIONS.has(ext)) return "Zip";
+  if (CODE_EXTENSIONS.has(ext)) return "Code";
+  return "File";
+}
 
 /** One directory's children, keyed by absolute path, cached once fetched. */
 function useDirCache(rpc: Rpc) {
@@ -104,7 +150,7 @@ function TreeNode({
           <span className="size-3.5 shrink-0" />
         )}
         <Icon
-          name={entry.kind === "directory" ? "Folder" : "File"}
+          name={iconForEntry(entry, open)}
           className="size-4 shrink-0 text-muted-foreground"
         />
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
@@ -154,19 +200,116 @@ function TreeNode({
   );
 }
 
-function FilePreview({ path, result }: { path: string; result: ReadResult | null }) {
+function FilePreview({
+  path,
+  result,
+  onSaved,
+  rpc,
+}: {
+  path: string;
+  result: ReadResult;
+  onSaved: (content: string) => void;
+  rpc: Rpc;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Selecting a different file (new `result` object identity) always lands back in view mode.
+  useEffect(() => {
+    setEditing(false);
+    setSaveError(null);
+  }, [result]);
+
+  const startEdit = () => {
+    if (result.kind !== "text") return;
+    setDraft(result.content);
+    setSaveError(null);
+    setEditing(true);
+  };
+
+  const save = () => {
+    setSaving(true);
+    setSaveError(null);
+    rpc.call("files_write", { path, content: draft }).then(
+      () => {
+        setSaving(false);
+        setEditing(false);
+        onSaved(draft);
+      },
+      (cause: unknown) => {
+        setSaving(false);
+        setSaveError(cause instanceof Error ? cause.message : String(cause));
+      },
+    );
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border px-3 py-2 font-mono text-xs text-muted-foreground">
-        {path}
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+          {path}
+        </span>
+        {result.kind === "text" && !editing ? (
+          <Button variant="ghost" size="sm" onClick={startEdit} className="h-7 gap-1.5 px-2">
+            <Icon name="Edit" className="size-3.5" />
+            Редактировать
+          </Button>
+        ) : null}
+        {editing ? (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2"
+              disabled={saving}
+              onClick={() => setEditing(false)}
+            >
+              Отмена
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 px-2"
+              disabled={saving || draft === (result.kind === "text" ? result.content : "")}
+              onClick={save}
+            >
+              {saving ? "Сохраняю…" : "Сохранить"}
+            </Button>
+          </>
+        ) : null}
       </div>
+      {saveError !== null ? (
+        <p className="shrink-0 border-b border-border px-3 py-2 text-sm text-destructive">
+          {saveError}
+        </p>
+      ) : null}
       <div className="min-h-0 flex-1 overflow-auto">
-        {result === null ? (
-          <p className="p-3 text-sm text-muted-foreground">Загрузка…</p>
+        {editing ? (
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            spellCheck={false}
+            className="h-full w-full resize-none border-0 bg-transparent p-3 font-mono text-xs outline-none"
+          />
         ) : result.kind === "text" ? (
-          <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs">
-            {result.content}
-          </pre>
+          isMarkdownName(path) ? (
+            <div className="p-3">
+              <Markdown content={result.content} />
+            </div>
+          ) : (
+            <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs">
+              {result.content}
+            </pre>
+          )
+        ) : result.kind === "image" ? (
+          <div className="p-3">
+            <img
+              src={`data:${result.mimeType};base64,${result.base64}`}
+              alt={path}
+              className="max-w-full rounded border border-border"
+            />
+          </div>
         ) : result.kind === "binary" ? (
           <p className="p-3 text-sm text-muted-foreground">
             Бинарный файл ({sizeLabel(result.sizeBytes)}) — предпросмотр недоступен.
@@ -234,8 +377,15 @@ function OfficeFilesPanel() {
           </p>
         ) : previewError !== null ? (
           <p className="p-3 text-sm text-destructive">{previewError}</p>
+        ) : preview === null ? (
+          <p className="p-3 text-sm text-muted-foreground">Загрузка…</p>
         ) : (
-          <FilePreview path={selectedPath} result={preview} />
+          <FilePreview
+            path={selectedPath}
+            result={preview}
+            rpc={rpc}
+            onSaved={(content) => setPreview({ kind: "text", content, sizeBytes: content.length })}
+          />
         )}
       </div>
     </div>
