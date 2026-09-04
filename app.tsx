@@ -8,54 +8,15 @@ import { definePluginApp, Markdown, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { Entry, ReadResult } from "./contract";
 import { Button } from "@/components/ui/button";
-import { Icon, type IconName } from "@/components/ui/icon";
+import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { fileIconSrc, folderIconSrc, isMarkdownName } from "@/lib/file-icons";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
-const MARKDOWN_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
-const IMAGE_EXTENSIONS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "svg",
-  "bmp",
-  "ico",
-  "avif",
-]);
-const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "mkv", "avi", "m4v"]);
-const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "ogg", "flac", "m4a", "aac"]);
-const ARCHIVE_EXTENSIONS = new Set(["zip", "tar", "gz", "tgz", "rar", "7z", "bz2"]);
-const CODE_EXTENSIONS = new Set([
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "sh", "bash", "zsh",
-  "go", "rs", "rb", "php", "c", "h", "cpp", "hpp", "java", "kt", "swift",
-  "json", "jsonc", "yaml", "yml", "toml", "ini", "env", "css", "scss",
-  "html", "htm", "sql", "graphql", "vue", "svelte",
-]);
-
-function extOf(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
-}
-
-function isMarkdownName(name: string): boolean {
-  return MARKDOWN_EXTENSIONS.has(extOf(name));
-}
-
-/** Picks a file/folder icon by extension — a file manager reads faster by shape than by name. */
-function iconForEntry(entry: Entry, open: boolean): IconName {
-  if (entry.kind === "directory") return open ? "FolderOpen" : "Folder";
-  const ext = extOf(entry.name);
-  if (MARKDOWN_EXTENSIONS.has(ext)) return "FileText";
-  if (IMAGE_EXTENSIONS.has(ext)) return "Image";
-  if (VIDEO_EXTENSIONS.has(ext)) return "Video";
-  if (AUDIO_EXTENSIONS.has(ext)) return "Music";
-  if (ext === "pdf") return "Pdf";
-  if (ARCHIVE_EXTENSIONS.has(ext)) return "Zip";
-  if (CODE_EXTENSIONS.has(ext)) return "Code";
-  return "File";
+/** Picks a colored file/folder icon (material-icon-theme) — reads faster by shape than by name. */
+function entryIconSrc(entry: Entry, open: boolean): string {
+  return entry.kind === "directory" ? folderIconSrc(entry.name, open) : fileIconSrc(entry.name);
 }
 
 /** One directory's children, keyed by absolute path, cached once fetched. */
@@ -149,9 +110,11 @@ function TreeNode({
         ) : (
           <span className="size-3.5 shrink-0" />
         )}
-        <Icon
-          name={iconForEntry(entry, open)}
-          className="size-4 shrink-0 text-muted-foreground"
+        <img
+          src={entryIconSrc(entry, open)}
+          alt=""
+          aria-hidden="true"
+          className="size-4 shrink-0"
         />
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
         {entry.kind === "file" ? (
