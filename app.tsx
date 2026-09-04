@@ -209,7 +209,7 @@ function FilePreview({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {path}
@@ -247,7 +247,7 @@ function FilePreview({
           {saveError}
         </p>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
         {editing ? (
           <textarea
             value={draft}
@@ -257,7 +257,7 @@ function FilePreview({
           />
         ) : result.kind === "text" ? (
           isMarkdownName(path) ? (
-            <div className="p-3">
+            <div className="min-w-0 max-w-full p-3 [overflow-wrap:anywhere]">
               <Markdown content={result.content} />
             </div>
           ) : (
@@ -333,7 +333,7 @@ function OfficeFilesPanel() {
           ))
         )}
       </div>
-      <div className="min-h-0">
+      <div className="min-h-0 min-w-0">
         {selectedPath === null ? (
           <p className="p-3 text-sm text-muted-foreground">
             Выбери файл слева, чтобы посмотреть содержимое.
