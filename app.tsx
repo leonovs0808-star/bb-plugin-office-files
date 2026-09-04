@@ -21,7 +21,7 @@ function useDirCache(rpc: Rpc) {
 
   const load = useCallback(
     (path: string | undefined) => {
-      rpc.call("files_list", { path }).then(
+      rpc.call("files_list", path === undefined ? {} : { path }).then(
         (result) => {
           setRootPath(result.rootPath);
           setByPath((prev) => {
