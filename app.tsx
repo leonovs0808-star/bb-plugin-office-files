@@ -4,6 +4,7 @@
 // @get-bb/plugin-sdk/app are provided by the BB app at load time (never bundled),
 // so this file must be loaded by BB, not imported directly.
 import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { definePluginApp, Markdown, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { Entry, ReadResult } from "./contract";
@@ -13,6 +14,35 @@ import { cn } from "@/lib/utils";
 import { fileIconSrc, folderIconSrc, isMarkdownName } from "@/lib/file-icons";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
+
+async function copyPath(path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path);
+    toast.success("Путь скопирован", { description: path });
+  } catch {
+    toast.error("Не удалось скопировать путь — буфер обмена недоступен");
+  }
+}
+
+function CopyPathButton({ path, className }: { path: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      title="Скопировать путь"
+      aria-label={`Скопировать путь ${path}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        void copyPath(path);
+      }}
+      className={cn(
+        "shrink-0 rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+        className,
+      )}
+    >
+      <Icon name="Copy" className="size-3.5" />
+    </button>
+  );
+}
 
 /** Picks a colored file/folder icon (material-icon-theme) — reads faster by shape than by name. */
 function entryIconSrc(entry: Entry, open: boolean): string {
@@ -92,37 +122,45 @@ function TreeNode({
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={toggle}
-        title={entry.path}
+      <div
         className={cn(
-          "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm hover:bg-accent",
+          "group flex w-full items-center gap-1 rounded pr-1 hover:bg-accent",
           selectedPath === entry.path && "bg-accent",
         )}
-        style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
-        {entry.kind === "directory" ? (
-          <Icon
-            name={open ? "ChevronDown" : "ChevronRight"}
-            className="size-3.5 shrink-0 text-muted-foreground"
+        <button
+          type="button"
+          onClick={toggle}
+          title={entry.path}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left text-sm"
+          style={{ paddingLeft: `${depth * 14 + 6}px` }}
+        >
+          {entry.kind === "directory" ? (
+            <Icon
+              name={open ? "ChevronDown" : "ChevronRight"}
+              className="size-3.5 shrink-0 text-muted-foreground"
+            />
+          ) : (
+            <span className="size-3.5 shrink-0" />
+          )}
+          <img
+            src={entryIconSrc(entry, open)}
+            alt=""
+            aria-hidden="true"
+            className="size-4 shrink-0"
           />
-        ) : (
-          <span className="size-3.5 shrink-0" />
-        )}
-        <img
-          src={entryIconSrc(entry, open)}
-          alt=""
-          aria-hidden="true"
-          className="size-4 shrink-0"
+          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+          {entry.kind === "file" ? (
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+              {sizeLabel(entry.sizeBytes)}
+            </span>
+          ) : null}
+        </button>
+        <CopyPathButton
+          path={entry.path}
+          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         />
-        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-        {entry.kind === "file" ? (
-          <span className="shrink-0 font-mono text-xs text-muted-foreground">
-            {sizeLabel(entry.sizeBytes)}
-          </span>
-        ) : null}
-      </button>
+      </div>
       {entry.kind === "directory" && open ? (
         dir === undefined ? (
           <p
@@ -214,6 +252,7 @@ function FilePreview({
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {path}
         </span>
+        <CopyPathButton path={path} />
         {result.kind === "text" && !editing ? (
           <Button variant="ghost" size="sm" onClick={startEdit} className="h-7 gap-1.5 px-2">
             <Icon name="Edit" className="size-3.5" />
