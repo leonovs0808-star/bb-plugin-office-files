@@ -15,32 +15,74 @@ import { fileIconSrc, folderIconSrc, isMarkdownName } from "@/lib/file-icons";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
-async function copyPath(path: string): Promise<void> {
+/** Parent directory of an absolute path (root's own parent stays "/"). */
+function parentDir(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx <= 0 ? "/" : path.slice(0, idx);
+}
+
+async function copyToClipboard(value: string, successLabel: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(path);
-    toast.success("Путь скопирован", { description: path });
+    await navigator.clipboard.writeText(value);
+    toast.success(successLabel, { description: value });
   } catch {
-    toast.error("Не удалось скопировать путь — буфер обмена недоступен");
+    toast.error("Не удалось скопировать — буфер обмена недоступен");
   }
 }
 
-function CopyPathButton({ path, className }: { path: string; className?: string }) {
+function CopyButton({
+  value,
+  icon,
+  title,
+  successLabel,
+  className,
+}: {
+  value: string;
+  icon: "Copy" | "Folder";
+  title: string;
+  successLabel: string;
+  className?: string;
+}) {
   return (
     <button
       type="button"
-      title="Скопировать путь"
-      aria-label={`Скопировать путь ${path}`}
+      title={title}
+      aria-label={title}
       onClick={(event) => {
         event.stopPropagation();
-        void copyPath(path);
+        void copyToClipboard(value, successLabel);
       }}
       className={cn(
         "shrink-0 rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground",
         className,
       )}
     >
-      <Icon name="Copy" className="size-3.5" />
+      <Icon name={icon} className="size-3.5" />
     </button>
+  );
+}
+
+function CopyPathButton({ path, className }: { path: string; className?: string }) {
+  return (
+    <CopyButton
+      value={path}
+      icon="Copy"
+      title="Скопировать путь"
+      successLabel="Путь скопирован"
+      className={className}
+    />
+  );
+}
+
+function CopyFolderButton({ path, className }: { path: string; className?: string }) {
+  return (
+    <CopyButton
+      value={parentDir(path)}
+      icon="Folder"
+      title="Скопировать путь к папке"
+      successLabel="Путь к папке скопирован"
+      className={className}
+    />
   );
 }
 
@@ -160,6 +202,12 @@ function TreeNode({
           path={entry.path}
           className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         />
+        {entry.kind === "file" ? (
+          <CopyFolderButton
+            path={entry.path}
+            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+          />
+        ) : null}
       </div>
       {entry.kind === "directory" && open ? (
         dir === undefined ? (
@@ -253,6 +301,7 @@ function FilePreview({
           {path}
         </span>
         <CopyPathButton path={path} />
+        <CopyFolderButton path={path} />
         {result.kind === "text" && !editing ? (
           <Button variant="ghost" size="sm" onClick={startEdit} className="h-7 gap-1.5 px-2">
             <Icon name="Edit" className="size-3.5" />
