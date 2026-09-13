@@ -20,12 +20,26 @@ import {
   type Entry,
   type FileMeta,
   type ReadResult,
+  type SearchResult,
   type WriteResult,
 } from "./contract.js";
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2 MB text preview cap
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB inline image cap
 const BINARY_SNIFF_BYTES = 8192;
+// Skipped while searching: huge, machine-owned, and never what the owner means
+// by "find my file". Dotfolders of the office itself (.claude, .agents) stay.
+const SEARCH_SKIPPED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".mypy_cache",
+  ".pytest_cache",
+]);
+/** Hard ceiling on directory entries touched by one query — keeps a broad search bounded. */
+const SEARCH_MAX_VISITED = 200_000;
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   ".png": "image/png",
@@ -156,6 +170,64 @@ async function readChunk(
   }
 }
 
+/**
+ * Breadth-first name search from the office root. Runs here, on the office
+ * machine, because walking hundreds of directories over RPC from the bb server
+ * would be one round trip per folder. Symlinked directories are not followed
+ * (dirent.isDirectory() is false for them), which also rules out loops.
+ */
+async function searchFiles(
+  rootPath: string,
+  query: string,
+  limit: number,
+): Promise<SearchResult> {
+  const root = await resolveWithin(rootPath, rootPath);
+  const needle = query.trim().toLowerCase();
+  if (needle === "") return { matches: [], truncated: false };
+
+  const matches: Entry[] = [];
+  const queue: string[] = [root];
+  let queueIndex = 0;
+  let visited = 0;
+
+  while (queueIndex < queue.length) {
+    const dir = queue[queueIndex++]!;
+    let dirents;
+    try {
+      dirents = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue; // unreadable directory — skip it rather than fail the whole search
+    }
+    for (const dirent of dirents) {
+      visited += 1;
+      if (visited > SEARCH_MAX_VISITED) return { matches, truncated: true };
+      const isDirectory = dirent.isDirectory();
+      if (isDirectory && SEARCH_SKIPPED_DIRS.has(dirent.name)) continue;
+      const entryPath = path.join(dir, dirent.name);
+      if (isDirectory) queue.push(entryPath);
+      if (!dirent.name.toLowerCase().includes(needle)) continue;
+      let sizeBytes: number | null = null;
+      let modifiedAtMs: number | null = null;
+      try {
+        const entryStat = await stat(entryPath);
+        sizeBytes = isDirectory ? null : entryStat.size;
+        modifiedAtMs = entryStat.mtimeMs;
+      } catch {
+        continue; // vanished between readdir and stat
+      }
+      matches.push({
+        name: dirent.name,
+        path: entryPath,
+        kind: isDirectory ? "directory" : "file",
+        sizeBytes,
+        modifiedAtMs,
+      });
+      if (matches.length >= limit) return { matches, truncated: true };
+    }
+  }
+  return { matches, truncated: false };
+}
+
 export default experimental_defineHostEntry({
   contract: hostContract,
   handlers: {
@@ -166,5 +238,6 @@ export default experimental_defineHostEntry({
     statFile: ({ rootPath, path: requestedPath }) => statFile(rootPath, requestedPath),
     readChunk: ({ rootPath, path: requestedPath, offset, length }) =>
       readChunk(rootPath, requestedPath, offset, length),
+    searchFiles: ({ rootPath, query, limit }) => searchFiles(rootPath, query, limit),
   },
 });

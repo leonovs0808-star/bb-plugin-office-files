@@ -5,9 +5,9 @@
 // so this file must be loaded by BB, not imported directly.
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { definePluginApp, Markdown, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, Markdown, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
-import type { Entry, ReadResult } from "./contract";
+import type { Entry, ReadResult, SearchResult } from "./contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -129,6 +129,36 @@ function DownloadButton({
   );
 }
 
+/** Puts the file's path into the thread's own draft — the panel owns the composer handle. */
+function InsertPathButton({
+  path,
+  onInsert,
+  className,
+}: {
+  path: string;
+  onInsert: (path: string) => void;
+  className?: string;
+}) {
+  const title = "Вставить путь в сообщение";
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onClick={(event) => {
+        event.stopPropagation();
+        onInsert(path);
+      }}
+      className={cn(
+        "shrink-0 rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+        className,
+      )}
+    >
+      <Icon name="MessageSquarePlus" className="size-3.5" />
+    </button>
+  );
+}
+
 /** Picks a colored file/folder icon (material-icon-theme) — reads faster by shape than by name. */
 function entryIconSrc(entry: Entry, open: boolean): string {
   return entry.kind === "directory" ? folderIconSrc(entry.name, open) : fileIconSrc(entry.name);
@@ -185,6 +215,7 @@ function TreeNode({
   load,
   selectedPath,
   onSelectFile,
+  onInsertPath,
 }: {
   entry: Entry;
   depth: number;
@@ -192,6 +223,7 @@ function TreeNode({
   load: (path: string) => void;
   selectedPath: string | null;
   onSelectFile: (path: string) => void;
+  onInsertPath: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const dir = entry.kind === "directory" ? byPath.get(entry.path) : undefined;
@@ -256,6 +288,11 @@ function TreeNode({
               name={entry.name}
               className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
             />
+            <InsertPathButton
+              path={entry.path}
+              onInsert={onInsertPath}
+              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+            />
           </>
         ) : null}
       </div>
@@ -291,9 +328,81 @@ function TreeNode({
               load={load}
               selectedPath={selectedPath}
               onSelectFile={onSelectFile}
+              onInsertPath={onInsertPath}
             />
           ))
         )
+      ) : null}
+    </div>
+  );
+}
+
+/** One search hit: name plus the folder it sits in, relative to the office root. */
+function SearchRow({
+  entry,
+  rootPath,
+  selectedPath,
+  onSelectFile,
+  onInsertPath,
+}: {
+  entry: Entry;
+  rootPath: string | null;
+  selectedPath: string | null;
+  onSelectFile: (path: string) => void;
+  onInsertPath: (path: string) => void;
+}) {
+  const relative =
+    rootPath !== null && entry.path.startsWith(`${rootPath}/`)
+      ? entry.path.slice(rootPath.length + 1)
+      : entry.path;
+  const folder = relative.includes("/") ? relative.slice(0, relative.lastIndexOf("/")) : "";
+
+  return (
+    <div
+      className={cn(
+        "group flex w-full items-center gap-1 rounded pr-1 hover:bg-accent",
+        selectedPath === entry.path && "bg-accent",
+      )}
+    >
+      <button
+        type="button"
+        title={entry.path}
+        onClick={() => {
+          if (entry.kind === "file") onSelectFile(entry.path);
+        }}
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-1.5 text-left text-sm"
+      >
+        <img
+          src={entryIconSrc(entry, false)}
+          alt=""
+          aria-hidden="true"
+          className="size-4 shrink-0"
+        />
+        <span className="shrink-0 truncate">{entry.name}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{folder}</span>
+        {entry.kind === "file" ? (
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+            {sizeLabel(entry.sizeBytes)}
+          </span>
+        ) : null}
+      </button>
+      <CopyPathButton
+        path={entry.path}
+        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+      />
+      {entry.kind === "file" ? (
+        <>
+          <DownloadButton
+            path={entry.path}
+            name={entry.name}
+            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+          />
+          <InsertPathButton
+            path={entry.path}
+            onInsert={onInsertPath}
+            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+          />
+        </>
       ) : null}
     </div>
   );
@@ -303,11 +412,13 @@ function FilePreview({
   path,
   result,
   onSaved,
+  onInsertPath,
   rpc,
 }: {
   path: string;
   result: ReadResult;
   onSaved: (content: string) => void;
+  onInsertPath: (path: string) => void;
   rpc: Rpc;
 }) {
   const [editing, setEditing] = useState(false);
@@ -353,6 +464,7 @@ function FilePreview({
         <CopyPathButton path={path} />
         <CopyFolderButton path={path} />
         {editing ? null : <DownloadButton path={path} name={fileName(path)} />}
+        {editing ? null : <InsertPathButton path={path} onInsert={onInsertPath} />}
         {result.kind === "text" && !editing ? (
           <Button variant="ghost" size="sm" onClick={startEdit} className="h-7 gap-1.5 px-2">
             <Icon name="Edit" className="size-3.5" />
@@ -429,10 +541,62 @@ function FilePreview({
 /** The panel component opened by the "Файлы офиса" thread panel action. */
 function OfficeFilesPanel() {
   const rpc = useRpc<typeof rpcContract>();
+  const composer = useComposer();
   const { byPath, rootPath, load } = useDirCache(rpc);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReadResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState<SearchResult | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  // Two characters is the floor: one letter matches most of the office and the
+  // walk would be pure noise.
+  const trimmedQuery = query.trim();
+  const searchActive = trimmedQuery.length >= 2;
+
+  useEffect(() => {
+    if (!searchActive) {
+      setSearch(null);
+      setSearching(false);
+      setSearchError(null);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      rpc.call("files_search", { query: trimmedQuery }).then(
+        (result) => {
+          if (cancelled) return;
+          setSearch(result);
+          setSearching(false);
+          setSearchError(null);
+        },
+        (cause: unknown) => {
+          if (cancelled) return;
+          setSearching(false);
+          setSearchError(cause instanceof Error ? cause.message : String(cause));
+        },
+      );
+    }, 250); // typing settles before the office machine starts walking directories
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [trimmedQuery, searchActive, rpc]);
+
+  const insertPath = useCallback(
+    (path: string) => {
+      composer.updateText((current) => {
+        const base = current.trimEnd();
+        return base === "" ? path : `${base} ${path}`;
+      });
+      composer.focus();
+      toast.success("Путь вставлен в сообщение", { description: path });
+    },
+    [composer],
+  );
 
   useEffect(() => {
     load(undefined);
@@ -453,24 +617,75 @@ function OfficeFilesPanel() {
 
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(220px,320px)_1fr]">
-      <div className="min-h-0 overflow-auto border-r border-border p-1.5">
-        {rootError !== null ? (
-          <p className="p-2 text-sm text-destructive">{rootError}</p>
-        ) : rootEntries === undefined ? (
-          <p className="p-2 text-sm text-muted-foreground">Загрузка офиса…</p>
-        ) : (
-          rootEntries.map((entry) => (
-            <TreeNode
-              key={entry.path}
-              entry={entry}
-              depth={0}
-              byPath={byPath}
-              load={load}
-              selectedPath={selectedPath}
-              onSelectFile={selectFile}
-            />
-          ))
-        )}
+      <div className="flex min-h-0 flex-col border-r border-border">
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
+          <Icon name="Search" className="size-3.5 shrink-0 text-muted-foreground" />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Поиск по имени"
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:appearance-none"
+          />
+          {query !== "" ? (
+            <button
+              type="button"
+              title="Очистить поиск"
+              aria-label="Очистить поиск"
+              onClick={() => setQuery("")}
+              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground"
+            >
+              <Icon name="X" className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-1.5">
+          {searchActive ? (
+            searchError !== null ? (
+              <p className="p-2 text-sm text-destructive">{searchError}</p>
+            ) : searching ? (
+              <p className="p-2 text-sm text-muted-foreground">Ищу…</p>
+            ) : search === null ? null : search.matches.length === 0 ? (
+              <p className="p-2 text-sm text-muted-foreground">Ничего не нашёл</p>
+            ) : (
+              <>
+                {search.matches.map((entry) => (
+                  <SearchRow
+                    key={entry.path}
+                    entry={entry}
+                    rootPath={rootPath}
+                    selectedPath={selectedPath}
+                    onSelectFile={selectFile}
+                    onInsertPath={insertPath}
+                  />
+                ))}
+                {search.truncated ? (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    Показаны первые {search.matches.length} — уточни запрос
+                  </p>
+                ) : null}
+              </>
+            )
+          ) : rootError !== null ? (
+            <p className="p-2 text-sm text-destructive">{rootError}</p>
+          ) : rootEntries === undefined ? (
+            <p className="p-2 text-sm text-muted-foreground">Загрузка офиса…</p>
+          ) : (
+            rootEntries.map((entry) => (
+              <TreeNode
+                key={entry.path}
+                entry={entry}
+                depth={0}
+                byPath={byPath}
+                load={load}
+                selectedPath={selectedPath}
+                onSelectFile={selectFile}
+                onInsertPath={insertPath}
+              />
+            ))
+          )}
+        </div>
       </div>
       <div className="min-h-0 min-w-0">
         {selectedPath === null ? (
@@ -486,6 +701,7 @@ function OfficeFilesPanel() {
             path={selectedPath}
             result={preview}
             rpc={rpc}
+            onInsertPath={insertPath}
             onSaved={(content) => setPreview({ kind: "text", content, sizeBytes: content.length })}
           />
         )}

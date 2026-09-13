@@ -7,9 +7,11 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   MAX_DOWNLOAD_CHUNK_BYTES,
+  MAX_SEARCH_MATCHES,
   entrySchema,
   hostContract,
   readResultSchema,
+  searchResultSchema,
   writeResultSchema,
 } from "./contract.js";
 
@@ -36,6 +38,10 @@ export const rpcContract = defineRpcContract({
   files_write: {
     input: z.object({ path: z.string(), content: z.string() }),
     output: writeResultSchema,
+  },
+  files_search: {
+    input: z.object({ query: z.string() }),
+    output: searchResultSchema,
   },
 });
 
@@ -101,6 +107,16 @@ export default async function plugin(bb: BbPluginApi) {
       const { rootPath } = await settings.get();
       const hostId = await resolveHostId();
       return host.call("readFile", { rootPath, path: requestedPath }, { hostId });
+    },
+    files_search: async ({ query }) => {
+      if (query.trim() === "") return { matches: [], truncated: false };
+      const { rootPath } = await settings.get();
+      const hostId = await resolveHostId();
+      return host.call(
+        "searchFiles",
+        { rootPath, query, limit: MAX_SEARCH_MATCHES },
+        { hostId },
+      );
     },
     files_write: async ({ path: requestedPath, content }) => {
       const { rootPath } = await settings.get();

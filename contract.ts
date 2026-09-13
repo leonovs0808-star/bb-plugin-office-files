@@ -42,6 +42,15 @@ export type FileMeta = z.infer<typeof fileMetaSchema>;
 export const chunkResultSchema = z.object({ base64: z.string(), bytesRead: z.number() });
 export type ChunkResult = z.infer<typeof chunkResultSchema>;
 
+/** Search stops at this many hits so one broad query cannot walk the whole office twice. */
+export const MAX_SEARCH_MATCHES = 300;
+
+export const searchResultSchema = z.object({
+  matches: z.array(entrySchema),
+  truncated: z.boolean(),
+});
+export type SearchResult = z.infer<typeof searchResultSchema>;
+
 /** Runtime contract for the host.ts entry (full fs access on the office server). */
 export const hostContract = defineRpcContract({
   listDir: {
@@ -74,5 +83,13 @@ export const hostContract = defineRpcContract({
       length: z.number().int().positive().max(MAX_DOWNLOAD_CHUNK_BYTES),
     }),
     output: chunkResultSchema,
+  },
+  searchFiles: {
+    input: z.object({
+      rootPath: z.string(),
+      query: z.string().min(1),
+      limit: z.number().int().positive().max(MAX_SEARCH_MATCHES),
+    }),
+    output: searchResultSchema,
   },
 });
