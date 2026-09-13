@@ -5,6 +5,7 @@
 // dotfiles (.claude, .agents, ...) — the office explicitly wants those
 // visible, so this plugin reads the filesystem itself instead.
 import {
+  open as fsOpen,
   realpath,
   readdir,
   readFile as fsReadFile,
@@ -13,7 +14,14 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
-import { hostContract, type Entry, type ReadResult, type WriteResult } from "./contract.js";
+import {
+  hostContract,
+  type ChunkResult,
+  type Entry,
+  type FileMeta,
+  type ReadResult,
+  type WriteResult,
+} from "./contract.js";
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2 MB text preview cap
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB inline image cap
@@ -118,6 +126,36 @@ async function writeFile(
   return { ok: true, sizeBytes: fileStat.size };
 }
 
+/** Name/size for a download, without reading any bytes — works for any size. */
+async function statFile(rootPath: string, requestedPath: string): Promise<FileMeta> {
+  const file = await resolveWithin(rootPath, requestedPath);
+  const fileStat = await stat(file);
+  if (fileStat.isDirectory()) throw new Error(`"${file}" is a directory, not a file`);
+  return {
+    name: path.basename(file),
+    sizeBytes: fileStat.size,
+    modifiedAtMs: fileStat.mtimeMs,
+  };
+}
+
+/** One slice of a file as base64 — the download route walks the file with these. */
+async function readChunk(
+  rootPath: string,
+  requestedPath: string,
+  offset: number,
+  length: number,
+): Promise<ChunkResult> {
+  const file = await resolveWithin(rootPath, requestedPath);
+  const handle = await fsOpen(file, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, offset);
+    return { base64: buffer.subarray(0, bytesRead).toString("base64"), bytesRead };
+  } finally {
+    await handle.close();
+  }
+}
+
 export default experimental_defineHostEntry({
   contract: hostContract,
   handlers: {
@@ -125,5 +163,8 @@ export default experimental_defineHostEntry({
     readFile: ({ rootPath, path: requestedPath }) => readFile(rootPath, requestedPath),
     writeFile: ({ rootPath, path: requestedPath, content }) =>
       writeFile(rootPath, requestedPath, content),
+    statFile: ({ rootPath, path: requestedPath }) => statFile(rootPath, requestedPath),
+    readChunk: ({ rootPath, path: requestedPath, offset, length }) =>
+      readChunk(rootPath, requestedPath, offset, length),
   },
 });

@@ -15,6 +15,12 @@ import { fileIconSrc, folderIconSrc, isMarkdownName } from "@/lib/file-icons";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 
+/** Last segment of an absolute path — the file's own name. */
+function fileName(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? path : path.slice(idx + 1);
+}
+
 /** Parent directory of an absolute path (root's own parent stays "/"). */
 function parentDir(path: string): string {
   const idx = path.lastIndexOf("/");
@@ -83,6 +89,43 @@ function CopyFolderButton({ path, className }: { path: string; className?: strin
       successLabel="Путь к папке скопирован"
       className={className}
     />
+  );
+}
+
+/** Same-origin URL of this plugin's streaming download route (see server.ts). */
+function downloadUrl(path: string): string {
+  return `/api/v1/plugins/office-files/http/download?path=${encodeURIComponent(path)}`;
+}
+
+/**
+ * A real anchor, not a button: the browser then owns the transfer (progress,
+ * resume, save dialog) and the bytes never pass through this component — which
+ * is why a 200 MB video downloads the same way a 2 KB note does.
+ */
+function DownloadButton({
+  path,
+  name,
+  className,
+}: {
+  path: string;
+  name: string;
+  className?: string;
+}) {
+  const title = "Скачать файл";
+  return (
+    <a
+      href={downloadUrl(path)}
+      download={name}
+      title={title}
+      aria-label={title}
+      onClick={(event) => event.stopPropagation()}
+      className={cn(
+        "shrink-0 rounded p-1 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+        className,
+      )}
+    >
+      <Icon name="Download" className="size-3.5" />
+    </a>
   );
 }
 
@@ -203,10 +246,17 @@ function TreeNode({
           className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
         />
         {entry.kind === "file" ? (
-          <CopyFolderButton
-            path={entry.path}
-            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-          />
+          <>
+            <CopyFolderButton
+              path={entry.path}
+              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+            />
+            <DownloadButton
+              path={entry.path}
+              name={entry.name}
+              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+            />
+          </>
         ) : null}
       </div>
       {entry.kind === "directory" && open ? (
@@ -302,6 +352,7 @@ function FilePreview({
         </span>
         <CopyPathButton path={path} />
         <CopyFolderButton path={path} />
+        {editing ? null : <DownloadButton path={path} name={fileName(path)} />}
         {result.kind === "text" && !editing ? (
           <Button variant="ghost" size="sm" onClick={startEdit} className="h-7 gap-1.5 px-2">
             <Icon name="Edit" className="size-3.5" />

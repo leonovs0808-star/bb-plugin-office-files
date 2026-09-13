@@ -29,6 +29,19 @@ export type ReadResult = z.infer<typeof readResultSchema>;
 export const writeResultSchema = z.object({ ok: z.literal(true), sizeBytes: z.number() });
 export type WriteResult = z.infer<typeof writeResultSchema>;
 
+/** One download read is capped so a single RPC payload stays small (base64 inflates ~4/3). */
+export const MAX_DOWNLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
+
+export const fileMetaSchema = z.object({
+  name: z.string(),
+  sizeBytes: z.number(),
+  modifiedAtMs: z.number(),
+});
+export type FileMeta = z.infer<typeof fileMetaSchema>;
+
+export const chunkResultSchema = z.object({ base64: z.string(), bytesRead: z.number() });
+export type ChunkResult = z.infer<typeof chunkResultSchema>;
+
 /** Runtime contract for the host.ts entry (full fs access on the office server). */
 export const hostContract = defineRpcContract({
   listDir: {
@@ -46,5 +59,20 @@ export const hostContract = defineRpcContract({
   writeFile: {
     input: z.object({ rootPath: z.string(), path: z.string(), content: z.string() }),
     output: writeResultSchema,
+  },
+  // Download path: stat once for the name/size, then pull the bytes chunk by
+  // chunk so a 200 MB video never has to fit in one RPC payload.
+  statFile: {
+    input: z.object({ rootPath: z.string(), path: z.string() }),
+    output: fileMetaSchema,
+  },
+  readChunk: {
+    input: z.object({
+      rootPath: z.string(),
+      path: z.string(),
+      offset: z.number().int().nonnegative(),
+      length: z.number().int().positive().max(MAX_DOWNLOAD_CHUNK_BYTES),
+    }),
+    output: chunkResultSchema,
   },
 });

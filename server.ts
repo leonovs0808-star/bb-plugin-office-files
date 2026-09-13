@@ -5,7 +5,19 @@
 // which host to target, exposes RPC for app.tsx, and validates input.
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { entrySchema, hostContract, readResultSchema, writeResultSchema } from "./contract.js";
+import {
+  MAX_DOWNLOAD_CHUNK_BYTES,
+  entrySchema,
+  hostContract,
+  readResultSchema,
+  writeResultSchema,
+} from "./contract.js";
+
+/** RFC 5987 content-disposition: ASCII fallback plus the real UTF-8 name. */
+function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
 
 export const rpcContract = defineRpcContract({
   files_list: {
@@ -95,6 +107,70 @@ export default async function plugin(bb: BbPluginApi) {
       const hostId = await resolveHostId();
       return host.call("writeFile", { rootPath, path: requestedPath, content }, { hostId });
     },
+  });
+
+  // Download: a plain GET the browser can stream to disk. The bytes live on the
+  // office machine, so the route pulls them from host.ts chunk by chunk and
+  // pipes them straight through — nothing is buffered whole on either side,
+  // which is what makes big files (video, archives) work at all.
+  bb.http.route("GET", "/download", async (context) => {
+    const requestedPath = context.req.query("path");
+    if (requestedPath === undefined || requestedPath.trim() === "") {
+      return new Response("Нужен параметр ?path=", {
+        status: 400,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    const { rootPath } = await settings.get();
+    let hostId: string;
+    let meta: { name: string; sizeBytes: number; modifiedAtMs: number };
+    try {
+      hostId = await resolveHostId();
+      meta = await host.call("statFile", { rootPath, path: requestedPath }, { hostId });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      bb.log.info(`download rejected: ${message}`);
+      return new Response(message, {
+        status: 404,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    const total = meta.sizeBytes;
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (offset >= total) {
+          controller.close();
+          return;
+        }
+        try {
+          const length = Math.min(MAX_DOWNLOAD_CHUNK_BYTES, total - offset);
+          const chunk = await host.call(
+            "readChunk",
+            { rootPath, path: requestedPath, offset, length },
+            { hostId },
+          );
+          if (chunk.bytesRead === 0) {
+            controller.close(); // file shrank mid-transfer — stop instead of looping
+            return;
+          }
+          controller.enqueue(new Uint8Array(Buffer.from(chunk.base64, "base64")));
+          offset += chunk.bytesRead;
+        } catch (cause) {
+          controller.error(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(total),
+        "content-disposition": contentDisposition(meta.name),
+        "cache-control": "no-store",
+      },
+    });
   });
 
   bb.onDispose(() => {
