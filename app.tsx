@@ -3,7 +3,7 @@
 // Compiled by `bb plugin build` into dist/app.js + dist/app.css. React and
 // @get-bb/plugin-sdk/app are provided by the BB app at load time (never bundled),
 // so this file must be loaded by BB, not imported directly.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { definePluginApp, Markdown, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
@@ -201,6 +201,21 @@ function useDirCache(rpc: Rpc) {
   return { byPath, rootPath, load };
 }
 
+/**
+ * Кнопки действий строки дерева. Раньше они были `opacity-0` и всё равно занимали
+ * ~100 px ширины на каждой строке — из-за этого имя файла на глубине 3 сжималось
+ * до «00-…». Теперь до наведения их нет в раскладке вообще (`hidden`), а при
+ * наведении они ложатся поверх правого края строки на фоне строки — имя место
+ * не теряет и высота строки не прыгает.
+ */
+function RowActions({ children }: { children: ReactNode }) {
+  return (
+    <div className="absolute right-0.5 top-0.5 hidden items-center gap-0.5 rounded bg-accent pl-1 group-hover:flex group-focus-within:flex">
+      {children}
+    </div>
+  );
+}
+
 function sizeLabel(bytes: number | null): string {
   if (bytes === null) return "";
   if (bytes < 1024) return `${bytes} Б`;
@@ -241,7 +256,7 @@ function TreeNode({
     <div>
       <div
         className={cn(
-          "group flex w-full items-center gap-1 rounded pr-1 hover:bg-accent",
+          "group relative flex w-full items-start rounded hover:bg-accent",
           selectedPath === entry.path && "bg-accent",
         )}
       >
@@ -249,52 +264,41 @@ function TreeNode({
           type="button"
           onClick={toggle}
           title={entry.path}
-          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left text-sm"
-          style={{ paddingLeft: `${depth * 14 + 6}px` }}
+          className="flex min-w-0 flex-1 items-start gap-1.5 py-1 pr-1 text-left text-sm"
+          style={{ paddingLeft: `${depth * 12 + 4}px` }}
         >
           {entry.kind === "directory" ? (
             <Icon
               name={open ? "ChevronDown" : "ChevronRight"}
-              className="size-3.5 shrink-0 text-muted-foreground"
+              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
             />
           ) : (
-            <span className="size-3.5 shrink-0" />
+            <span className="mt-0.5 size-3.5 shrink-0" />
           )}
           <img
             src={entryIconSrc(entry, open)}
             alt=""
             aria-hidden="true"
-            className="size-4 shrink-0"
+            className="mt-0.5 size-4 shrink-0"
           />
-          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+          {/* Имя — главное в строке: переносится целиком, никогда не режется многоточием. */}
+          <span className="min-w-0 flex-1 break-all leading-5">{entry.name}</span>
           {entry.kind === "file" ? (
-            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+            <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground">
               {sizeLabel(entry.sizeBytes)}
             </span>
           ) : null}
         </button>
-        <CopyPathButton
-          path={entry.path}
-          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-        />
-        {entry.kind === "file" ? (
-          <>
-            <CopyFolderButton
-              path={entry.path}
-              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-            />
-            <DownloadButton
-              path={entry.path}
-              name={entry.name}
-              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-            />
-            <InsertPathButton
-              path={entry.path}
-              onInsert={onInsertPath}
-              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-            />
-          </>
-        ) : null}
+        <RowActions>
+          <CopyPathButton path={entry.path} />
+          {entry.kind === "file" ? (
+            <>
+              <CopyFolderButton path={entry.path} />
+              <DownloadButton path={entry.path} name={entry.name} />
+              <InsertPathButton path={entry.path} onInsert={onInsertPath} />
+            </>
+          ) : null}
+        </RowActions>
       </div>
       {entry.kind === "directory" && open ? (
         dir === undefined ? (
@@ -360,7 +364,7 @@ function SearchRow({
   return (
     <div
       className={cn(
-        "group flex w-full items-center gap-1 rounded pr-1 hover:bg-accent",
+        "group relative flex w-full items-start rounded hover:bg-accent",
         selectedPath === entry.path && "bg-accent",
       )}
     >
@@ -370,40 +374,35 @@ function SearchRow({
         onClick={() => {
           if (entry.kind === "file") onSelectFile(entry.path);
         }}
-        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-1.5 text-left text-sm"
+        className="flex min-w-0 flex-1 items-start gap-1.5 py-1 pl-1.5 pr-1 text-left text-sm"
       >
         <img
           src={entryIconSrc(entry, false)}
           alt=""
           aria-hidden="true"
-          className="size-4 shrink-0"
+          className="mt-0.5 size-4 shrink-0"
         />
-        <span className="shrink-0 truncate">{entry.name}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{folder}</span>
+        <span className="flex min-w-0 flex-1 flex-col leading-5">
+          <span className="break-all">{entry.name}</span>
+          {folder !== "" ? (
+            <span className="break-all text-xs leading-4 text-muted-foreground">{folder}</span>
+          ) : null}
+        </span>
         {entry.kind === "file" ? (
-          <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground">
             {sizeLabel(entry.sizeBytes)}
           </span>
         ) : null}
       </button>
-      <CopyPathButton
-        path={entry.path}
-        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-      />
-      {entry.kind === "file" ? (
-        <>
-          <DownloadButton
-            path={entry.path}
-            name={entry.name}
-            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-          />
-          <InsertPathButton
-            path={entry.path}
-            onInsert={onInsertPath}
-            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
-          />
-        </>
-      ) : null}
+      <RowActions>
+        <CopyPathButton path={entry.path} />
+        {entry.kind === "file" ? (
+          <>
+            <DownloadButton path={entry.path} name={entry.name} />
+            <InsertPathButton path={entry.path} onInsert={onInsertPath} />
+          </>
+        ) : null}
+      </RowActions>
     </div>
   );
 }
@@ -616,7 +615,7 @@ function OfficeFilesPanel() {
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[minmax(220px,320px)_1fr]">
+    <div className="grid h-full min-h-0 grid-cols-[minmax(240px,380px)_1fr]">
       <div className="flex min-h-0 flex-col border-r border-border">
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
           <Icon name="Search" className="size-3.5 shrink-0 text-muted-foreground" />
