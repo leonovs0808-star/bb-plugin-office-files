@@ -3,7 +3,15 @@
 // Compiled by `bb plugin build` into dist/app.js + dist/app.css. React and
 // @get-bb/plugin-sdk/app are provided by the BB app at load time (never bundled),
 // so this file must be loaded by BB, not imported directly.
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { toast } from "sonner";
 import { definePluginApp, Markdown, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
@@ -538,10 +546,82 @@ function FilePreview({
 }
 
 /** The panel component opened by the "Файлы офиса" thread panel action. */
+const TREE_WIDTH_KEY = "office-files.treeWidth";
+const TREE_WIDTH_MIN = 180;
+const TREE_WIDTH_DEFAULT = 320;
+
+/**
+ * Ширина колонки дерева: тянется разделителем мышью, запоминается в localStorage.
+ * Раньше была зашита сеткой `minmax(220px,380px)` — ни уменьшить, ни увеличить.
+ */
+function useTreeWidth(): [number, (width: number) => void] {
+  const [width, setWidthState] = useState<number>(() => {
+    try {
+      const stored = Number(window.localStorage.getItem(TREE_WIDTH_KEY));
+      return Number.isFinite(stored) && stored >= TREE_WIDTH_MIN ? stored : TREE_WIDTH_DEFAULT;
+    } catch {
+      return TREE_WIDTH_DEFAULT;
+    }
+  });
+  const setWidth = useCallback((next: number) => {
+    setWidthState(next);
+    try {
+      window.localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(next)));
+    } catch {
+      // localStorage недоступен — просто не запоминаем
+    }
+  }, []);
+  return [width, setWidth];
+}
+
+/** Вертикальная ручка между деревом и превью: тянешь — колонка меняет ширину. */
+function ColumnResizer({
+  containerRef,
+  onResize,
+}: {
+  containerRef: RefObject<HTMLDivElement | null>;
+  onResize: (width: number) => void;
+}) {
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const container = containerRef.current;
+    if (container === null) return;
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const left = container.getBoundingClientRect().left;
+    const maxWidth = Math.max(TREE_WIDTH_MIN, container.clientWidth - 160);
+    const move = (moveEvent: PointerEvent) => {
+      const next = Math.min(maxWidth, Math.max(TREE_WIDTH_MIN, moveEvent.clientX - left));
+      onResize(next);
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      title="Потяни, чтобы изменить ширину списка файлов"
+      onPointerDown={onPointerDown}
+      className="group/resizer relative -mx-1 w-2 shrink-0 cursor-col-resize touch-none select-none"
+    >
+      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover/resizer:w-0.5 group-hover/resizer:bg-primary" />
+    </div>
+  );
+}
+
 function OfficeFilesPanel() {
   const rpc = useRpc<typeof rpcContract>();
   const composer = useComposer();
   const { byPath, rootPath, load } = useDirCache(rpc);
+  const [treeWidth, setTreeWidth] = useTreeWidth();
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReadResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -615,8 +695,11 @@ function OfficeFilesPanel() {
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[minmax(240px,380px)_1fr]">
-      <div className="flex min-h-0 flex-col border-r border-border">
+    <div ref={containerRef} className="flex h-full min-h-0 min-w-0">
+      <div
+        className="flex min-h-0 shrink-0 flex-col"
+        style={{ width: `${treeWidth}px` }}
+      >
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
           <Icon name="Search" className="size-3.5 shrink-0 text-muted-foreground" />
           <input
@@ -686,7 +769,8 @@ function OfficeFilesPanel() {
           )}
         </div>
       </div>
-      <div className="min-h-0 min-w-0">
+      <ColumnResizer containerRef={containerRef} onResize={setTreeWidth} />
+      <div className="min-h-0 min-w-0 flex-1">
         {selectedPath === null ? (
           <p className="p-3 text-sm text-muted-foreground">
             Выбери файл слева, чтобы посмотреть содержимое.
