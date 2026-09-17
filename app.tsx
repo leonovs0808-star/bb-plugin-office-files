@@ -210,8 +210,8 @@ function useDirCache(rpc: Rpc) {
  */
 function RowActions({ children }: { children: ReactNode }) {
   return (
-    <div className="absolute right-0.5 top-0.5 hidden items-center gap-0.5 rounded bg-accent pl-1 group-hover:flex group-focus-within:flex">
-      {children}
+    <div className="absolute right-0.5 top-0.5 hidden rounded bg-background group-hover:block group-focus-within:block">
+      <div className="flex items-center gap-0.5 rounded bg-accent pl-1">{children}</div>
     </div>
   );
 }
@@ -284,7 +284,7 @@ function TreeNode({
           {/* Имя — главное в строке: переносится целиком, никогда не режется многоточием. */}
           <span className="min-w-0 flex-1 break-all leading-5">{entry.name}</span>
           {entry.kind === "file" ? (
-            <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground">
+            <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground group-hover:invisible group-focus-within:invisible">
               {sizeLabel(entry.sizeBytes)}
             </span>
           ) : null}
@@ -389,7 +389,7 @@ function SearchRow({
           ) : null}
         </span>
         {entry.kind === "file" ? (
-          <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground">
+          <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground group-hover:invisible group-focus-within:invisible">
             {sizeLabel(entry.sizeBytes)}
           </span>
         ) : null}
