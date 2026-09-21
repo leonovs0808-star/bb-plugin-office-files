@@ -210,6 +210,39 @@ function useDirCache(rpc: Rpc) {
 }
 
 /**
+ * Шаг вложенности и геометрия направляющих. Линия уровня `i` идёт ровно под
+ * шевроном родителя этого уровня: шеврон начинается на `i * INDENT_PX + ROW_PAD_LEFT`
+ * и шириной 14 px, значит его середина — `+ 7`.
+ */
+const INDENT_PX = 16;
+const ROW_PAD_LEFT = 4;
+const GUIDE_X = ROW_PAD_LEFT + 7;
+
+/**
+ * Вертикальные линии вложенности — по одной на каждый уровень выше текущего.
+ * Без них строки разной глубины читались как один список: отступа в 12 px глазу
+ * не хватало, и файл из вложенной папки выглядел соседом файла уровнем выше
+ * (жалоба владельца 21.09.2026 на скриншот с `zamesin-kurs-v14`). Линия тянется
+ * через все строки ветки и обрывается там, где ветка кончилась — по обрыву и
+ * видно конец вложенности.
+ */
+function IndentGuides({ depth }: { depth: number }) {
+  if (depth === 0) return null;
+  return (
+    <>
+      {Array.from({ length: depth }, (_, level) => (
+        <span
+          key={level}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 w-px bg-muted-foreground/30"
+          style={{ left: `${level * INDENT_PX + GUIDE_X}px` }}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
  * Кнопки действий строки дерева. Раньше они были `opacity-0` и всё равно занимали
  * ~100 px ширины на каждой строке — из-за этого имя файла на глубине 3 сжималось
  * до «00-…». Теперь до наведения их нет в раскладке вообще (`hidden`), а при
@@ -268,12 +301,13 @@ function TreeNode({
           selectedPath === entry.path && "bg-accent",
         )}
       >
+        <IndentGuides depth={depth} />
         <button
           type="button"
           onClick={toggle}
           title={entry.path}
           className="flex min-w-0 flex-1 items-start gap-1.5 py-1 pr-1 text-left text-sm"
-          style={{ paddingLeft: `${depth * 12 + 4}px` }}
+          style={{ paddingLeft: `${depth * INDENT_PX + ROW_PAD_LEFT}px` }}
         >
           {entry.kind === "directory" ? (
             <Icon
@@ -290,7 +324,14 @@ function TreeNode({
             className="mt-0.5 size-4 shrink-0"
           />
           {/* Имя — главное в строке: переносится целиком, никогда не режется многоточием. */}
-          <span className="min-w-0 flex-1 break-all leading-5">{entry.name}</span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 break-all leading-5",
+              entry.kind === "directory" && open && "font-medium",
+            )}
+          >
+            {entry.name}
+          </span>
           {entry.kind === "file" ? (
             <span className="shrink-0 font-mono text-xs leading-5 text-muted-foreground group-hover:invisible group-focus-within:invisible">
               {sizeLabel(entry.sizeBytes)}
@@ -310,26 +351,35 @@ function TreeNode({
       </div>
       {entry.kind === "directory" && open ? (
         dir === undefined ? (
-          <p
-            className="py-1 text-xs text-muted-foreground"
-            style={{ paddingLeft: `${(depth + 1) * 14 + 6}px` }}
-          >
-            Загрузка…
-          </p>
+          <div className="relative">
+            <IndentGuides depth={depth + 1} />
+            <p
+              className="py-1 text-xs text-muted-foreground"
+              style={{ paddingLeft: `${(depth + 1) * INDENT_PX + ROW_PAD_LEFT + 20}px` }}
+            >
+              Загрузка…
+            </p>
+          </div>
         ) : dir.error !== null ? (
-          <p
-            className="py-1 text-xs text-destructive"
-            style={{ paddingLeft: `${(depth + 1) * 14 + 6}px` }}
-          >
-            {dir.error}
-          </p>
+          <div className="relative">
+            <IndentGuides depth={depth + 1} />
+            <p
+              className="py-1 text-xs text-destructive"
+              style={{ paddingLeft: `${(depth + 1) * INDENT_PX + ROW_PAD_LEFT + 20}px` }}
+            >
+              {dir.error}
+            </p>
+          </div>
         ) : dir.entries.length === 0 ? (
-          <p
-            className="py-1 text-xs text-muted-foreground"
-            style={{ paddingLeft: `${(depth + 1) * 14 + 6}px` }}
-          >
-            Пусто
-          </p>
+          <div className="relative">
+            <IndentGuides depth={depth + 1} />
+            <p
+              className="py-1 text-xs text-muted-foreground"
+              style={{ paddingLeft: `${(depth + 1) * INDENT_PX + ROW_PAD_LEFT + 20}px` }}
+            >
+              Пусто
+            </p>
+          </div>
         ) : (
           dir.entries.map((child) => (
             <TreeNode
