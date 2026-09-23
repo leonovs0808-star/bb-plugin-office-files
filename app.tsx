@@ -105,25 +105,39 @@ function downloadUrl(path: string): string {
   return `/api/v1/plugins/office-files/http/download?path=${encodeURIComponent(path)}`;
 }
 
+/** Папка едет другим роутом: она сначала пакуется в zip на машине офиса. */
+function downloadFolderUrl(path: string): string {
+  return `/api/v1/plugins/office-files/http/download-folder?path=${encodeURIComponent(path)}`;
+}
+
 /**
  * A real anchor, not a button: the browser then owns the transfer (progress,
  * resume, save dialog) and the bytes never pass through this component — which
  * is why a 200 MB video downloads the same way a 2 KB note does.
+ *
+ * Для папки ссылка ведёт на роут упаковки: ответ начинается только когда архив
+ * собран, поэтому на большой папке пауза до появления диалога сохранения —
+ * это она и есть, об этом же говорит подсказка кнопки.
  */
 function DownloadButton({
   path,
   name,
+  kind = "file",
   className,
 }: {
   path: string;
   name: string;
+  kind?: "file" | "directory";
   className?: string;
 }) {
-  const title = "Скачать файл";
+  const isDirectory = kind === "directory";
+  const title = isDirectory
+    ? "Скачать папку архивом .zip (большая папка сначала пакуется — это займёт время)"
+    : "Скачать файл";
   return (
     <a
-      href={downloadUrl(path)}
-      download={name}
+      href={isDirectory ? downloadFolderUrl(path) : downloadUrl(path)}
+      download={isDirectory ? `${name}.zip` : name}
       title={title}
       aria-label={title}
       onClick={(event) => event.stopPropagation()}
@@ -132,7 +146,7 @@ function DownloadButton({
         className,
       )}
     >
-      <Icon name="Download" className="size-3.5" />
+      <Icon name={isDirectory ? "Archive" : "Download"} className="size-3.5" />
     </a>
   );
 }
@@ -346,7 +360,9 @@ function TreeNode({
               <DownloadButton path={entry.path} name={entry.name} />
               <InsertPathButton path={entry.path} onInsert={onInsertPath} />
             </>
-          ) : null}
+          ) : (
+            <DownloadButton path={entry.path} name={entry.name} kind="directory" />
+          )}
         </RowActions>
       </div>
       {entry.kind === "directory" && open ? (
@@ -459,7 +475,9 @@ function SearchRow({
             <DownloadButton path={entry.path} name={entry.name} />
             <InsertPathButton path={entry.path} onInsert={onInsertPath} />
           </>
-        ) : null}
+        ) : (
+          <DownloadButton path={entry.path} name={entry.name} kind="directory" />
+        )}
       </RowActions>
     </div>
   );

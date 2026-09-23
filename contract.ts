@@ -42,6 +42,19 @@ export type FileMeta = z.infer<typeof fileMetaSchema>;
 export const chunkResultSchema = z.object({ base64: z.string(), bytesRead: z.number() });
 export type ChunkResult = z.infer<typeof chunkResultSchema>;
 
+/** A folder download is packed into one zip first; these caps keep that bounded. */
+export const MAX_ARCHIVE_FILES = 20_000;
+export const MAX_ARCHIVE_TOTAL_BYTES = 4 * 1024 * 1024 * 1024 - 1; // zip32 ceiling
+
+export const archiveMetaSchema = z.object({
+  token: z.string(),
+  name: z.string(),
+  sizeBytes: z.number(),
+  fileCount: z.number(),
+  skippedCount: z.number(),
+});
+export type ArchiveMeta = z.infer<typeof archiveMetaSchema>;
+
 /** Search stops at this many hits so one broad query cannot walk the whole office twice. */
 export const MAX_SEARCH_MATCHES = 300;
 
@@ -91,5 +104,23 @@ export const hostContract = defineRpcContract({
       limit: z.number().int().positive().max(MAX_SEARCH_MATCHES),
     }),
     output: searchResultSchema,
+  },
+  // Folder download: pack the folder into a temporary zip on the office machine,
+  // then pull it with the same chunk walk as a plain file and drop it afterwards.
+  packDirectory: {
+    input: z.object({ rootPath: z.string(), path: z.string() }),
+    output: archiveMetaSchema,
+  },
+  readArchiveChunk: {
+    input: z.object({
+      token: z.string().min(1),
+      offset: z.number().int().nonnegative(),
+      length: z.number().int().positive().max(MAX_DOWNLOAD_CHUNK_BYTES),
+    }),
+    output: chunkResultSchema,
+  },
+  discardArchive: {
+    input: z.object({ token: z.string().min(1) }),
+    output: z.object({ ok: z.literal(true) }),
   },
 });

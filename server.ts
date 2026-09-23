@@ -189,6 +189,88 @@ export default async function plugin(bb: BbPluginApi) {
     });
   });
 
+  // Скачивание папки: она сначала пакуется в zip на машине офиса (host.ts), и уже
+  // готовый архив течёт в браузер теми же кусками, что и обычный файл. Пакуем
+  // именно там, где лежат файлы, — тянуть тысячу файлов по одному через RPC,
+  // чтобы сжать их на стороне bb, было бы на порядок дольше.
+  bb.http.route("GET", "/download-folder", async (context) => {
+    const requestedPath = context.req.query("path");
+    if (requestedPath === undefined || requestedPath.trim() === "") {
+      return new Response("Нужен параметр ?path=", {
+        status: 400,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    const { rootPath } = await settings.get();
+    let hostId: string;
+    let archive: { token: string; name: string; sizeBytes: number; fileCount: number };
+    try {
+      hostId = await resolveHostId();
+      archive = await host.call("packDirectory", { rootPath, path: requestedPath }, { hostId });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      bb.log.info(`folder download rejected: ${message}`);
+      return new Response(message, {
+        status: 400,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    bb.log.info(
+      `folder download: ${requestedPath} → ${archive.name} ` +
+        `(${archive.fileCount} файлов, ${archive.sizeBytes} Б)`,
+    );
+
+    const total = archive.sizeBytes;
+    let offset = 0;
+    /** Архив временный: убираем его и когда дочитали, и когда вкладку закрыли на середине. */
+    const discard = async () => {
+      try {
+        await host.call("discardArchive", { token: archive.token }, { hostId });
+      } catch (cause) {
+        bb.log.info(`archive cleanup failed: ${cause instanceof Error ? cause.message : cause}`);
+      }
+    };
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (offset >= total) {
+          controller.close();
+          await discard();
+          return;
+        }
+        try {
+          const length = Math.min(MAX_DOWNLOAD_CHUNK_BYTES, total - offset);
+          const chunk = await host.call(
+            "readArchiveChunk",
+            { token: archive.token, offset, length },
+            { hostId },
+          );
+          if (chunk.bytesRead === 0) {
+            controller.close();
+            await discard();
+            return;
+          }
+          controller.enqueue(new Uint8Array(Buffer.from(chunk.base64, "base64")));
+          offset += chunk.bytesRead;
+        } catch (cause) {
+          controller.error(cause instanceof Error ? cause : new Error(String(cause)));
+          await discard();
+        }
+      },
+      async cancel() {
+        await discard();
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "content-type": "application/zip",
+        "content-length": String(total),
+        "content-disposition": contentDisposition(archive.name),
+        "cache-control": "no-store",
+      },
+    });
+  });
+
   bb.onDispose(() => {
     bb.log.info("disposed");
   });

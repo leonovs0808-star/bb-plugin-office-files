@@ -4,18 +4,25 @@
 // BB's own bb.sdk.files/bb.sdk.hosts.directory helpers silently skip
 // dotfiles (.claude, .agents, ...) — the office explicitly wants those
 // visible, so this plugin reads the filesystem itself instead.
+import { randomUUID } from "node:crypto";
 import {
+  mkdir,
   open as fsOpen,
   realpath,
   readdir,
   readFile as fsReadFile,
+  rm,
   stat,
   writeFile as fsWriteFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import {
+  MAX_ARCHIVE_FILES,
+  MAX_ARCHIVE_TOTAL_BYTES,
   hostContract,
+  type ArchiveMeta,
   type ChunkResult,
   type Entry,
   type FileMeta,
@@ -23,6 +30,7 @@ import {
   type SearchResult,
   type WriteResult,
 } from "./contract.js";
+import { writeZip } from "./lib/zip.js";
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2 MB text preview cap
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB inline image cap
@@ -170,6 +178,93 @@ async function readChunk(
   }
 }
 
+/** Temp home for folder archives — outside the office, wiped as soon as the download ends. */
+const ARCHIVE_DIR = path.join(tmpdir(), "bb-office-files-archives");
+/** Archives older than this are leftovers of an interrupted download — swept on the next pack. */
+const ARCHIVE_TTL_MS = 60 * 60 * 1000;
+const ARCHIVE_TOKEN_PATTERN = /^[0-9a-f-]{36}\.zip$/;
+
+/** Drops archives nobody came back for, so /tmp does not silently grow. */
+async function sweepStaleArchives(): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(ARCHIVE_DIR);
+  } catch {
+    return; // no archive dir yet — nothing to sweep
+  }
+  const deadline = Date.now() - ARCHIVE_TTL_MS;
+  for (const name of names) {
+    if (!ARCHIVE_TOKEN_PATTERN.test(name)) continue;
+    const file = path.join(ARCHIVE_DIR, name);
+    try {
+      const fileStat = await stat(file);
+      if (fileStat.mtimeMs < deadline) await rm(file, { force: true });
+    } catch {
+      // gone already, or a race with another sweep — nothing to do
+    }
+  }
+}
+
+function archivePathFor(token: string): string {
+  if (!ARCHIVE_TOKEN_PATTERN.test(token)) throw new Error("Неизвестный архив");
+  return path.join(ARCHIVE_DIR, token);
+}
+
+/**
+ * Packs a folder into a temporary zip and reports where it landed. The bytes go
+ * back to the browser through readArchiveChunk, exactly like a plain file
+ * download — the archive never has to fit in one RPC payload or in memory.
+ */
+async function packDirectory(rootPath: string, requestedPath: string): Promise<ArchiveMeta> {
+  const dir = await resolveWithin(rootPath, requestedPath);
+  const dirStat = await stat(dir);
+  if (!dirStat.isDirectory()) throw new Error(`"${dir}" is not a directory`);
+  await mkdir(ARCHIVE_DIR, { recursive: true });
+  await sweepStaleArchives();
+
+  const token = `${randomUUID()}.zip`;
+  const archivePath = path.join(ARCHIVE_DIR, token);
+  try {
+    const result = await writeZip({
+      sourceDir: dir,
+      archivePath,
+      maxFiles: MAX_ARCHIVE_FILES,
+      maxTotalBytes: MAX_ARCHIVE_TOTAL_BYTES,
+    });
+    return {
+      token,
+      name: `${path.basename(dir)}.zip`,
+      sizeBytes: result.sizeBytes,
+      fileCount: result.fileCount,
+      skippedCount: result.skippedCount,
+    };
+  } catch (cause) {
+    await rm(archivePath, { force: true }); // half-written archive is worse than none
+    throw cause;
+  }
+}
+
+/** One slice of a prepared archive — same chunk walk as readChunk, different root. */
+async function readArchiveChunk(
+  token: string,
+  offset: number,
+  length: number,
+): Promise<ChunkResult> {
+  const handle = await fsOpen(archivePathFor(token), "r");
+  try {
+    const buffer = Buffer.allocUnsafe(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, offset);
+    return { base64: buffer.subarray(0, bytesRead).toString("base64"), bytesRead };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function discardArchive(token: string): Promise<{ ok: true }> {
+  await rm(archivePathFor(token), { force: true });
+  return { ok: true };
+}
+
 /**
  * Breadth-first name search from the office root. Runs here, on the office
  * machine, because walking hundreds of directories over RPC from the bb server
@@ -239,5 +334,9 @@ export default experimental_defineHostEntry({
     readChunk: ({ rootPath, path: requestedPath, offset, length }) =>
       readChunk(rootPath, requestedPath, offset, length),
     searchFiles: ({ rootPath, query, limit }) => searchFiles(rootPath, query, limit),
+    packDirectory: ({ rootPath, path: requestedPath }) =>
+      packDirectory(rootPath, requestedPath),
+    readArchiveChunk: ({ token, offset, length }) => readArchiveChunk(token, offset, length),
+    discardArchive: ({ token }) => discardArchive(token),
   },
 });
