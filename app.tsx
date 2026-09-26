@@ -233,6 +233,13 @@ const ROW_PAD_LEFT = 4;
 const GUIDE_X = ROW_PAD_LEFT + 7;
 
 /**
+ * Цвет линий вложенности — золото из брендбука офиса (`--gold` в
+ * neuroshtab/ui/tokens.css). Плагин живёт внутри BB и токенов офиса не видит,
+ * поэтому значение продублировано здесь; меняется золото в брендбуке — меняй и тут.
+ */
+const GUIDE_COLOR = "#E0A82E";
+
+/**
  * Вертикальные линии вложенности — по одной на каждый уровень выше текущего.
  * Без них строки разной глубины читались как один список: отступа в 12 px глазу
  * не хватало, и файл из вложенной папки выглядел соседом файла уровнем выше
@@ -248,8 +255,8 @@ function IndentGuides({ depth }: { depth: number }) {
         <span
           key={level}
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 w-px bg-muted-foreground/30"
-          style={{ left: `${level * INDENT_PX + GUIDE_X}px` }}
+          className="pointer-events-none absolute inset-y-0 w-px"
+          style={{ left: `${level * INDENT_PX + GUIDE_X}px`, backgroundColor: GUIDE_COLOR }}
         />
       ))}
     </>
