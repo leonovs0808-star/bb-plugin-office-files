@@ -13,7 +13,7 @@ import {
   type RefObject,
 } from "react";
 import { toast } from "sonner";
-import { definePluginApp, Markdown, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, Markdown, useBbContext, useBbNavigate, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { Entry, ReadResult, SearchResult } from "./contract";
 import { Button } from "@/components/ui/button";
@@ -868,7 +868,33 @@ function OfficeFilesPanel() {
   );
 }
 
+/**
+ * Кнопка «Файлы» в шапке треда от плагина «Пульт» шлёт сигнал `bb-pult:open` — открываем свою
+ * панель штатно, как из списка инструментов. Чужую панель Пульт открыть не может (SDK раскрывает
+ * только свои), поэтому открывает её сам плагин.
+ */
+function PultBridge() {
+  const context = useBbContext();
+  const navigate = useBbNavigate();
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{ plugin?: string; threadId?: string }>).detail;
+      if (detail?.plugin === "office-files" && detail.threadId === context.threadId) {
+        navigate.openThreadPanel({ actionId: "office-files-panel" });
+      }
+    };
+    window.addEventListener("bb-pult:open", onOpen);
+    return () => window.removeEventListener("bb-pult:open", onOpen);
+  }, [context.threadId, navigate]);
+  return null;
+}
+
 export default definePluginApp((app) => {
+  // Слот появился в SDK позже 0.4.34, на котором собран плагин; сам BB (0.46) его уже даёт.
+  // SDK не поднимаем ради одного слота: в 0.6 исчез composer.updateText, который тут используется.
+  (app.slots as unknown as {
+    experimental_appOverlay(registration: { id: string; component: () => null }): void;
+  }).experimental_appOverlay({ id: "pult-bridge", component: PultBridge });
   // Opens next to the thread — in the thread's own right panel, as a
   // closable tab — never a separate app window.
   app.slots.threadPanelAction({
