@@ -13,7 +13,7 @@ import {
   type RefObject,
 } from "react";
 import { toast } from "sonner";
-import { definePluginApp, Markdown, useBbContext, useBbNavigate, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, Markdown, useBbNavigate, useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./server";
 import type { Entry, ReadResult, SearchResult } from "./contract";
 import { Button } from "@/components/ui/button";
@@ -868,33 +868,39 @@ function OfficeFilesPanel() {
   );
 }
 
+
 /**
- * Кнопка «Файлы» в шапке треда от плагина «Пульт» шлёт сигнал `bb-pult:open` — открываем свою
- * панель штатно, как из списка инструментов. Чужую панель Пульт открыть не может (SDK раскрывает
- * только свои), поэтому открывает её сам плагин.
+ * Значок в шапке любого треда — открывает эту панель в один клик, без «иконка → список →
+ * инструмент» (Сергей 22.10.2026, SER-368; рядом стоят значки плагина «Пульт»).
+ * Открывает сам плагин из шапки треда: другой плагин чужую панель раскрыть не может, а из
+ * фонового оверлея openThreadPanel не срабатывает — у него нет поверхности треда.
  */
-function PultBridge() {
-  const context = useBbContext();
+function HeaderOpenButton() {
   const navigate = useBbNavigate();
-  useEffect(() => {
-    const onOpen = (event: Event) => {
-      const detail = (event as CustomEvent<{ plugin?: string; threadId?: string }>).detail;
-      if (detail?.plugin === "office-files" && detail.threadId === context.threadId) {
-        navigate.openThreadPanel({ actionId: "office-files-panel" });
-      }
-    };
-    window.addEventListener("bb-pult:open", onOpen);
-    return () => window.removeEventListener("bb-pult:open", onOpen);
-  }, [context.threadId, navigate]);
-  return null;
+  return (
+    <span title="Файлы офиса" className="inline-flex">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        aria-label="Файлы офиса"
+        onClick={() => navigate.openThreadPanel({ actionId: "office-files-panel" })}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+          strokeLinejoin="round" className="size-4" aria-hidden="true">
+          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+        </svg>
+      </Button>
+    </span>
+  );
 }
 
 export default definePluginApp((app) => {
   // Слот появился в SDK позже 0.4.34, на котором собран плагин; сам BB (0.46) его уже даёт.
   // SDK не поднимаем ради одного слота: в 0.6 исчез composer.updateText, который тут используется.
   (app.slots as unknown as {
-    experimental_appOverlay(registration: { id: string; component: () => null }): void;
-  }).experimental_appOverlay({ id: "pult-bridge", component: PultBridge });
+    experimental_threadHeaderAction(registration: { id: string; title: string; component: typeof HeaderOpenButton }): void;
+  }).experimental_threadHeaderAction({ id: "files-open", title: "Файлы офиса", component: HeaderOpenButton });
   // Opens next to the thread — in the thread's own right panel, as a
   // closable tab — never a separate app window.
   app.slots.threadPanelAction({
